@@ -30,7 +30,7 @@
 
 ```bash
 # 克隆仓库
-git clone git@github.com:lhh737/RAG-Chinese-QA.git
+git clone git@github.com:lhh737/-RAG-Chinese-QA.git
 cd RAG-Chinese-QA
 
 # 创建虚拟环境
