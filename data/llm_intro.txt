@@ -1,0 +1,29 @@
+# 大语言模型概述
+
+大语言模型（Large Language Model, LLM）是指基于Transformer架构的大规模预训练语言模型。
+
+## Transformer 架构
+
+Transformer由Vaswani等人在2017年的论文《Attention Is All You Need》中提出。
+其核心是自注意力机制（Self-Attention），能够捕捉序列中任意两个位置之间的依赖关系。
+
+## BERT 模型
+
+BERT（Bidirectional Encoder Representations from Transformers）由Google在2018年提出。
+BERT采用双向编码器，通过掩码语言模型（MLM）和下一句预测（NSP）进行预训练。
+
+## GPT 系列
+
+GPT（Generative Pre-trained Transformer）由OpenAI开发。
+GPT-1于2018年发布，GPT-2于2019年发布，GPT-3于2020年发布，参数量达到1750亿。
+GPT-4于2023年发布，支持多模态输入。
+
+## RAG 技术
+
+检索增强生成（Retrieval-Augmented Generation, RAG）是一种结合信息检索与文本生成的技术。
+RAG通过从外部知识库中检索相关文档，将检索结果作为上下文输入大模型，从而减少幻觉问题。
+
+## FAISS 向量数据库
+
+FAISS（Facebook AI Similarity Search）是Meta开源的向量相似度搜索库。
+它支持多种索引类型，包括IVF、HNSW等，适用于大规模向量检索场景。

@@ -1,0 +1,11 @@
+Transformer 架构是近年来深度学习领域最重要的创新之一。
+由 Vaswani et al. 在 2017 年提出的 Attention Is All You Need 论文中首次介绍。
+Transformer 完全基于自注意力机制（Self-Attention），摒弃了传统的循环神经网络（RNN）和卷积神经网络（CNN）。
+其核心组件包括多头注意力（Multi-Head Attention）、位置编码（Positional Encoding）和前馈神经网络（FFN）。
+Transformer 为大语言模型（LLM）的发展奠定了基础，后续的 GPT、BERT、T5 等模型都基于此架构。
+
+检索增强生成（RAG）是一种结合检索和生成的技术。
+RAG 通过在生成答案前先从知识库中检索相关文档，然后将检索结果作为上下文提供给生成模型。
+这种方法可以有效缓解大语言模型的知识截止和幻觉问题。
+RAG 的核心步骤包括：文档分块、文本嵌入、向量检索、重排序和答案生成。
+常见的 RAG 优化技术包括 HyDE、混合检索、Reranker 和父子分块等。

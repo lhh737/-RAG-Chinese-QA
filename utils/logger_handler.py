@@ -16,7 +16,7 @@ DEFAULT_LOG_FORMAT= logging.Formatter(
 )
 
 def get_logger(
-        name: str= "agent",
+        name: str= "rag",
         console_level:int =logging.INFO,        # 只输出info级别以上的日志信息，避免debug垃圾信息
         file_level: int=logging.DEBUG,
         log_file =None,

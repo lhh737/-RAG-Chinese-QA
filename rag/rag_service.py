@@ -1,58 +1,59 @@
-
 """
-总结服务类：用户提问，搜索参考资料，将提问和参考资料提交给模型，让模型总结回复
+RAG 总结服务：混合检索 + Qwen API 生成 + 答案溯源（参考资料编号）。
 """
-from langchain_core.documents import Document
-from langchain_core.output_parsers import StrOutputParser
+from __future__ import annotations
 
-from rag.vector_store import VectorStoreService
-from utils.prompt_loader import load_rag_prompts
+from typing import Any
+
 from langchain_core.prompts import PromptTemplate
-from model.factory import chat_model
 
-
-def print_prompt(prompt):
-    print("="*20)
-    print(prompt.to_string())
-    print("="*20)
-    return prompt
+from rag.generator import generate
+from rag.hybrid_retriever import HybridRetriever
+from rag.vector_store import VectorStore
+from utils.prompt_loader import load_rag_prompts
 
 
 class RagSummarizeService(object):
     def __init__(self):
-        self.vector_store = VectorStoreService()
-        self.retriever = self.vector_store.get_retriever()
+        self.vector_store = VectorStore()
+        self.hybrid = HybridRetriever(self.vector_store)
         self.prompt_text = load_rag_prompts()
         self.prompt_template = PromptTemplate.from_template(self.prompt_text)
-        self.model = chat_model
-        self.chain = self._init_chain()
 
-    def _init_chain(self):
-        chain = self.prompt_template | print_prompt | self.model | StrOutputParser()
-        return chain
+    def retriever_docs(self, query: str):
+        """兼容旧接口：返回向量检索子块（不含混合逻辑）。"""
+        if self.vector_store.faiss_store is None:
+            return []
+        return self.vector_store.faiss_store.similarity_search(query, k=8)
 
-    def retriever_docs(self, query: str) -> list[Document]:
-        return self.retriever.invoke(query)
+    def rag_summarize_with_sources(self, query: str) -> dict[str, Any]:
+        context, provenance = self.hybrid.retrieve_for_rag(query)
+        if not context.strip():
+            return {
+                "answer": "当前知识库中未找到与问题相关的资料，请先上传文档后再试。",
+                "sources": [],
+            }
+        prompt_str = self.prompt_template.format(input=query, context=context)
+        # 使用 Qwen API 生成，传递空字符串作为 system prompt（已编码在 prompt template 中）
+        answer = generate("", context=context, question=query)
+        return {"answer": answer, "sources": provenance}
 
     def rag_summarize(self, query: str) -> str:
-
-        context_docs = self.retriever_docs(query)
-
-        context = ""
-        counter = 0
-        for doc in context_docs:
-            counter += 1
-            context += f"【参考资料{counter}】: 参考资料：{doc.page_content} | 参考元数据：{doc.metadata}\n"
-
-        return self.chain.invoke(
-            {
-                "input": query,
-                "context": context,
-            }
-        )
+        """供调用：返回带溯源列表的纯文本。"""
+        out = self.rag_summarize_with_sources(query)
+        lines = [out["answer"]]
+        if out.get("sources"):
+            lines.append("\n--- 参考来源 ---")
+            for i, s in enumerate(out["sources"], start=1):
+                src = s.get("source") or ""
+                excerpt = s.get("excerpt", "")[:80]
+                lines.append(f"{i}. {src} — {excerpt}…")
+        return "\n".join(lines)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+    import os
+
+    os.environ.setdefault("RAG_SMOKE_TEST", "1")
     rag = RagSummarizeService()
-
-    print(rag.rag_summarize("小户型适合哪些扫地机器人"))
+    print(rag.rag_summarize("什么是Transformer注意力机制"))

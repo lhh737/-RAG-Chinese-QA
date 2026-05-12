@@ -1,0 +1,45 @@
+# 环境变量（含 API Key，不可提交）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# 虚拟环境
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# Gradio
+.gradio/
+gradio_output.log
+
+# 向量库数据（运行时生成）
+faiss_db/
+
+# 模型文件（过大，不纳入 git）
+models/
+
+# 上传文件
+data/uploads/*
+
+# 日志
+logs/
+*.log
+
+# 杂项
+md5.txt
+chroma_db/
+
+# 系统文件
+.DS_Store
+Thumbs.db
