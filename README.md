@@ -1,188 +1,170 @@
+<h1 align="center">RAG-Chinese-QA</h1>
 <p align="center">
-  <h1 align="center">RAG-Chinese-QA</h1>
-  <p align="center">基于 LangChain 的中文 RAG 文档问答系统 — 混合检索 · HyDE 增强 · 重排序 · 答案溯源</p>
+  基于 LangChain 的中文 RAG 文档问答系统<br>
+  混合检索 · HyDE 增强 · 重排序 · 答案溯源
 </p>
-
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
-  <img src="https://img.shields.io/badge/LangChain-1.2.13-orange.svg" alt="LangChain">
+  <img src="https://img.shields.io/badge/python-3.10+-blue?logo=python" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
+  <img src="https://img.shields.io/badge/framework-LangChain%201.2-orange" alt="LangChain">
 </p>
 
 ---
 
 ## 概述
 
-一个完整的 Retrieval-Augmented Generation (RAG) 系统，专为中文文档问答场景设计。上传 PDF/TXT 文档后，系统自动完成分块、向量化、索引构建，随后可通过自然语言提问获取带溯源的精确答案。
+上传 PDF 或 TXT 文档，用自然语言提问，获得带来源标注的精确回答。
 
-**核心理念**：取多种检索策略之长，通过"粗筛→精排→上下文还原"三级管线，在不显著增加延迟的前提下最大化召回率与答案质量。
+系统将文档切分为 400 字子块用于检索、1200 字父块用于上下文还原；检索时 FAISS 向量与 BM25 关键词两路并行召回，经 Cross-Encoder 重排序后动态选取 4-8 个最相关段落，交由 Qwen-Max 生成答案并附录引用来源。
+
+**API 模式零模型下载，拿到 API Key 即可运行**；也支持完全离线的本地 BGE 模型。
+
+---
+
+## 快速开始
+
+### 前置
+
+- Python 3.10+
+- 阿里云百炼 [DashScope API Key](https://dashscope.aliyuncs.com/)（注册即送免费额度）
+
+### 安装
+
+```bash
+git clone git@github.com:lhh737/-RAG-Chinese-QA.git
+cd -- -RAG-Chinese-QA
+
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+### 配置
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，修改一行：
+
+```ini
+DASHSCOPE_API_KEY=sk-你的真实Key
+```
+
+### 运行
+
+```bash
+python mvp_app.py
+```
+
+浏览器打开 `http://127.0.0.1:7860`，上传文档 → 输入问题 → 获取答案。
+
+---
 
 ## 检索管线
 
 ```
 用户提问
   │
-  ├─→ [HyDE] LLM 生成假设性答案作为检索 query
+  ├─→ HyDE         LLM 生成假设性答案，替换原始 query 以提升召回
   │
-  ├─→ [粗筛] FAISS 向量检索 ─┐
-  │         BM25 稀疏检索  ─┤ 合并去重，候选池 40-60 条
-  │                         ┘
-  ├─→ [精排] Cross-Encoder / DashScope Reranker → Top 12
+  ├─→ 粗筛          FAISS 向量检索 (×24)  ─┐
+  │                BM25 稀疏检索 (×24)  ─┤  合并去重，~50 条候选
+  │                                       ┘
+  ├─→ 精排          Cross-Encoder / gte-rerank-v2 → Top 12
   │
-  ├─→ [还原] 子块 → 父块映射，动态 TopK (4-8 块)
+  ├─→ 还原          子块 → 父块映射，动态 TopK (4-8 块)
   │
-  └─→ [生成] Qwen 结合上下文生成答案 + 溯源引用
+  └─→ 生成          Qwen-Max + 上下文 → 答案 + 溯源引用
 ```
-
-## 核心特性
-
-### 混合检索
-
-FAISS 稠密向量 + BM25 稀疏检索双路并行召回。向量擅长语义匹配，BM25 擅长关键词命中，两者互补，显著降低漏召率。
-
-- 向量路：DashScope `text-embedding-async-v2` / BGE-M3 嵌入，FAISS 索引
-- 稀疏路：jieba 中文分词，BM25Okapi 倒排索引，精确匹配中文术语
-
-### HyDE 增强
-
-用户提问往往短且口语化，直接检索效果不佳。HyDE (*Hypothetical Document Embeddings*) 先让 LLM 将问题展开为一段"假想文档"，再用这段文档作为检索 query，大幅提升与知识库文本的语义对齐度，从而提升召回率。LLM 调用失败时自动回退为原始 query。
-
-### 父子分块
-
-| 类型 | 大小 | 用途 |
-|------|------|------|
-| 子块 (child) | ~400 字 | 精准检索，送入 FAISS + BM25 |
-| 父块 (parent) | ~1200 字 | 上下文还原，保证语义完整 |
-
-检索在子块上进行，返回时将关联的父块内容一并提供给 LLM，避免因分块切断关键上下文。
-
-### 重排序
-
-从候选池中取 Top-N 条送入 Cross-Encoder Reranker，逐对计算 `(query, chunk)` 相关性分数，重新排序后取前 12。支持两种后端：
-
-| 后端 | 模型 | 说明 |
-|------|------|------|
-| DashScope API | `gte-rerank-v2` | 阿里云在线 API，免部署，自带免费额度 |
-| 本地 | `BAAI/bge-reranker-base` | HuggingFace Cross-Encoder，离线可用 |
-
-### 动态 TopK
-
-并非固定取 K 个父块，而是根据 query 长度和 reranker 分数分布自动调节：
-
-- 长 query (≥36 字符)：上下文需求更高，自动 +2
-- 分数高度集中：说明主题聚焦，适度增加以覆盖细节
-- 最终范围：4-8 块，兼顾回答完整性与 token 成本
-
-### 答案溯源
-
-每个回答末尾附带 **参考来源** 列表，标注文件名和原文摘录。可在 Gradio 界面中点击文档直接查看全文。
-
-### 双模式切换
-
-通过 `.env` 中的两行配置即可在 API 模式与本地模式间切换：
-
-| 组件 | API 模式 | 本地模式 |
-|------|----------|----------|
-| 嵌入 | DashScope `text-embedding-async-v2` | BGE-M3 (~2.2GB) |
-| 重排序 | DashScope `gte-rerank-v2` | BGE-Reranker (~1.0GB) |
-| 生成 | Qwen-Max | — |
-
-API 模式零模型下载即可运行，适合快速体验；本地模式完全离线，适合生产环境或隐私敏感场景。
 
 ---
 
-## 快速开始
+## 功能详解
 
-### 前置要求
+### 混合检索：FAISS + BM25
 
-- Python 3.10+
-- [DashScope API Key](https://dashscope.aliyuncs.com/) (阿里云百炼，免费额度充足)
+| 路径 | 原理 | 擅长 |
+|------|------|------|
+| FAISS 向量 | 稠密语义向量余弦相似度 | 同义表达、概念匹配 |
+| BM25 稀疏 | jieba 分词 + 倒排索引 | 术语精确命中、专有名词 |
 
-### 1. 克隆与安装
+两路各召回 24 条后合并去重，有效降低单一检索的漏召风险。
 
-```bash
-git clone git@github.com:lhh737/-RAG-Chinese-QA.git
-cd -- -RAG-Chinese-QA           # 目录名以 - 开头，需用 -- 转义
+### HyDE：假设性文档增强
 
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+用户问题通常短且口语化，直接检索效果有限。HyDE 先调用 LLM 将问题扩展为一段"假想文档"——例如问 "transformer 为什么用多头注意力" 时，LLM 会生成一段教科书风格的技术描述，这段描述与真实文档的语义空间更接近，从而显著提升检索命中率。LLM 调用失败时自动回退为原始 query。
 
-### 2. 配置 API Key
+### 父子分块
 
-```bash
-cp .env.example .env
-```
+检索精度和上下文完整性往往不可兼得——小块检索准但缺乏上下文，大块语义完整但噪声多。父子分块策略将两者解耦：
 
-编辑 `.env`，填入：
+- **子块 (~400 字)**：送入 FAISS 索引和 BM25 语料库，负责精准匹配
+- **父块 (~1200 字)**：检索命中子块后，向上关联到所属父块，将完整段落提供给 LLM
+
+### 重排序
+
+候选池合并后送入 Cross-Encoder Reranker 逐对打分重排：
+
+| 后端 | 模型 | 特点 |
+|------|------|------|
+| DashScope API | `gte-rerank-v2` | 免部署，免费额度 100 万 token |
+| 本地 Cross-Encoder | `BAAI/bge-reranker-base` | 完全离线，~1GB 显存 |
+
+### 动态 TopK
+
+送给 LLM 的上下文块数量不是固定的，而是根据 query 长度和 reranker 分数分布自动调节（4-8 块），在回答完整性和 token 消耗之间平衡。
+
+### 双模式切换
+
+`.env` 中两行配置即可切换：
 
 ```ini
-DASHSCOPE_API_KEY=sk-your-real-key-here
+# API 模式（默认，零模型下载）
+EMBED_MODE=api
+RERANK_MODE=api
+
+# 本地模式（离线可用，需先执行 scripts/download_bge.py）
+EMBED_MODE=local
+RERANK_MODE=local
 ```
-
-其他配置保持默认即可（API 模式，qwen-max 推理）。
-
-### 3. 启动
-
-```bash
-python mvp_app.py
-```
-
-浏览器打开 `http://127.0.0.1:7860`，上传文档即可开始问答。
 
 ---
 
 ## 使用指南
 
-### 两个界面版本
+### 界面版本
 
-| 入口 | 端口 | 说明 |
+| 入口 | 端口 | 场景 |
 |------|------|------|
-| `mvp_app.py` | 7860 | 精简版：上传 → 对话，轻量快速 |
-| `gradio_app.py` | 7862 | 完整版：包含论文目录批量导入、文档内容查看 |
+| `mvp_app.py` | 7860 | 日常使用：上传对话一体，轻量快速 |
+| `gradio_app.py` | 7862 | 研究场景：含论文批量导入、文档内容查看、DataFrame 文件列表 |
 
 ### 脚本工具
 
 ```bash
-# 下载 arXiv 论文（按主题批量获取 2024-2026 AI 论文）
-python scripts/fetch_papers.py --max-per-topic 10 --topic rag
+# 从 arXiv 批量下载论文（按主题，自动去重，支持断点续传）
+python scripts/fetch_papers.py --topic rag --max-per-topic 20
 
-# 批量导入 papers/ 到知识库
+# 将 papers/ 目录全部导入知识库
 python scripts/batch_import.py
 
-# 下载本地模型（切换离线模式前执行）
+# 下载 BGE 本地模型（约 3.2GB，切换离线模式前运行一次）
 python scripts/download_bge.py
 ```
 
-### 切换到本地模型
+### 检索参数调优
 
-```bash
-# 1. 下载模型（一次性，约 3.2GB）
-python scripts/download_bge.py
-
-# 2. 修改 .env
-EMBED_MODE=local
-EMBED_LOCAL_MODEL=models/bge-m3
-RERANK_MODE=local
-RERANK_LOCAL_MODEL=models/bge-reranker-base
-
-# 3. 重启应用
-python mvp_app.py
-```
-
-### 配置调参
-
-`config/faiss.yml` 中可调整检索参数：
+`config/faiss.yml`：
 
 ```yaml
-vector_fetch_k: 24      # 向量路召回量
-bm25_fetch_k: 24        # BM25 路召回量
-rerank_top_n: 12        # 重排序后保留
-base_context_k: 4       # 基础上下文块数
-max_context_k: 8        # 动态上限
-parent_chunk_size: 1200 # 父块大小
-child_chunk_size: 400   # 子块大小
+vector_fetch_k: 24       # 向量召回数
+bm25_fetch_k: 24         # BM25 召回数
+rerank_top_n: 12         # 重排序后截断
+base_context_k: 4        # 基础上下文块数
+max_context_k: 8         # 动态上限
+parent_chunk_size: 1200  # 父块字符数
+child_chunk_size: 400    # 子块字符数
 ```
 
 ---
@@ -191,55 +173,60 @@ child_chunk_size: 400   # 子块大小
 
 ```
 ├── config/
-│   ├── settings.py          # 环境变量解析，所有配置项入口
-│   ├── faiss.yml            # 检索参数调优
-│   └── rag.yml              # 模型与生成参数
-│
+│   ├── settings.py           # 环境变量解析，所有配置入口
+│   ├── faiss.yml             # 检索超参
+│   └── rag.yml               # 模型与生成参数
 ├── model/
-│   ├── factory.py           # 模型工厂：API/本地 双模式自动切换
-│   └── dashscope_embedding.py  # DashScope Embedding API 封装
-│
+│   ├── factory.py            # 模型工厂：API/本地自动切换 + LRU 缓存
+│   └── dashscope_embedding.py
 ├── rag/
-│   ├── pipeline.py          # 统一管线入口 RAGPipeline
-│   ├── hybrid_retriever.py  # 混合检索引擎 + 动态 TopK
-│   ├── hyde.py              # HyDE 假设性文档生成
-│   ├── vector_store.py      # FAISS 索引 + 父子块管理 + 文件清单
-│   ├── document_loader.py   # PDF/TXT 解析 + 父子分块
-│   └── generator.py         # Qwen API 生成封装
-│
+│   ├── pipeline.py           # 统一管线 RAGPipeline
+│   ├── hybrid_retriever.py   # 混合检索 + 动态 TopK
+│   ├── hyde.py               # HyDE 假设文档生成
+│   ├── vector_store.py       # FAISS 索引 + 父子块 + manifest
+│   ├── document_loader.py    # PDF/TXT 解析 + 父子分块
+│   └── generator.py          # Qwen API 封装
 ├── scripts/
-│   ├── fetch_papers.py      # arXiv 论文批量下载
-│   ├── batch_import.py      # 批量导入文档到知识库
-│   ├── download_bge.py      # BGE 本地模型下载器
-│   └── download_models.py   # 通用模型下载
-│
-├── prompts/
-│   └── rag_summarize.txt    # RAG 生成 Prompt 模板
-│
-├── utils/                   # 工具：日志、配置解析、路径
-├── data/                    # 文档数据 + 论文存储
-│   └── papers/              # 知识库论文 PDF
-│
-├── mvp_app.py               # Gradio 精简版入口
-├── gradio_app.py            # Gradio 完整版入口
+│   ├── fetch_papers.py       # arXiv 论文批量下载器
+│   ├── batch_import.py       # 文档批量导入
+│   ├── download_bge.py       # BGE 模型下载
+│   └── download_models.py    # 通用模型下载
+├── prompts/rag_summarize.txt # RAG 生成 Prompt 模板
+├── utils/                    # 日志、配置解析、路径工具
+├── data/papers/              # 知识库论文
+├── mvp_app.py                # Gradio 入口（精简版）
+├── gradio_app.py             # Gradio 入口（完整版）
 └── requirements.txt
 ```
 
 ---
 
-## 技术栈
+## 常见问题
 
-| 层级 | 技术 |
-|------|------|
-| 框架 | LangChain 1.2 |
-| 向量库 | FAISS |
-| 嵌入 | DashScope `text-embedding-async-v2` / BGE-M3 |
-| 稀疏检索 | BM25Okapi + jieba 分词 |
-| 重排序 | DashScope `gte-rerank-v2` / `BAAI/bge-reranker-base` |
-| 生成 | Qwen-Max (OpenAI 兼容 API) |
-| 文档解析 | PyPDFLoader + RecursiveCharacterTextSplitter |
-| 界面 | Gradio 5 |
+<details>
+<summary><b>如何获取 DashScope API Key？</b></summary>
 
-## License
+访问 [阿里云百炼控制台](https://dashscope.aliyuncs.com/)，注册后进入 API-KEY 管理页面创建 Key。新用户赠送免费额度（text-embedding-async-v2 2000 万 token / gte-rerank-v2 100 万 token / qwen-max 100 万 token）。
+</details>
 
-MIT
+<details>
+<summary><b>支持哪些文档格式？</b></summary>
+
+PDF 和 TXT。PDF 通过 PyPDFLoader 提取文本，扫描版 PDF（纯图片）需要先 OCR 处理。
+</details>
+
+<details>
+<summary><b>切换嵌入模型后旧索引报错怎么办？</b></summary>
+
+系统会自动检测 FAISS 维度与当前嵌入模型是否匹配，不匹配时重建索引。如果仍有问题，删除 `faiss_db/` 目录后重启即可。
+</details>
+
+<details>
+<summary><b>上传大文档很慢？</b></summary>
+
+瓶颈通常在嵌入 API（DashScope 免费额度下 QPS 有限）。可以调大 `child_chunk_size` 减少分块数以加速，但会损失一定检索精度。
+</details>
+
+## 许可证
+
+MIT — 可自由使用、修改和分发。
